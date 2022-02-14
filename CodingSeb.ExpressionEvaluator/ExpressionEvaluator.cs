@@ -1,6 +1,6 @@
 /******************************************************************************************************
     Title : ExpressionEvaluator (https://github.com/codingseb/ExpressionEvaluator)
-    Version : 1.4.29.0 
+    Version : 1.4.36.0 
     (if last digit (the forth) is not a zero, the version is an intermediate version and can be unstable)
 
     Author : Coding Seb
@@ -55,7 +55,7 @@ namespace CodingSeb.ExpressionEvaluator
         protected static readonly Regex initInNewBeginningRegex = new Regex(@"^(?>\s*){", RegexOptions.Compiled);
         protected static readonly Regex functionArgKeywordsRegex = new Regex(@"^\s*(?<keyword>out|ref|in)\s+((?<typeName>[\p{L}_][\p{L}_0-9\.\[\]<>]*[?]?)\s+(?=[\p{L}_]))?(?<toEval>(?<varName>[\p{L}_](?>[\p{L}_0-9]*))\s*(=.*)?)$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
-        protected static readonly Regex instanceCreationWithNewKeywordRegex = new Regex(@"^new(?>\s*)((?<isAnonymous>[{{])|((?<name>[\p{L}_][\p{L}_0-9\.]*)(?>\s*)(?<isgeneric>[<](?>[^<>]+|(?<gentag>[<])|(?<-gentag>[>]))*(?(gentag)(?!))[>])?(?>\s*)((?<isfunction>[(])|(?<isArray>\[)|(?<isInit>[{{]))?))", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        protected static readonly Regex instanceCreationWithNewKeywordRegex = new Regex(@"^new(?=[^\w])\s*((?<isAnonymous>[{{])|((?<name>[\p{L}_][\p{L}_0-9\.]*)(?>\s*)(?<isgeneric>[<](?>[^<>]+|(?<gentag>[<])|(?<-gentag>[>]))*(?(gentag)(?!))[>])?(?>\s*)((?<isfunction>[(])|(?<isArray>\[)|(?<isInit>[{{]))?))", RegexOptions.IgnoreCase | RegexOptions.Compiled);
         protected string CastRegexPattern { get { return @"^\((?>\s*)(?<typeName>[\p{L}_][\p{L}_0-9\.\[\]<>]*[?]?)(?>\s*)\)"; } }
 
         // To remove comments in scripts based on https://stackoverflow.com/questions/3524317/regex-to-strip-line-comments-from-c-sharp/3524689#3524689
@@ -336,6 +336,7 @@ namespace CodingSeb.ExpressionEvaluator
             { "null", null},
             { "true", true },
             { "false", false },
+            { "this", null }
         };
 
         protected IDictionary<string, Func<double, double>> simpleDoubleMathFuncsDictionary = new Dictionary<string, Func<double, double>>(StringComparer.Ordinal)
@@ -378,7 +379,7 @@ namespace CodingSeb.ExpressionEvaluator
                     return typedArray;
                 }
             },
-            { "Avg", (self, args) => args.ConvertAll(arg => Convert.ToDouble(self.Evaluate(arg))).Sum() / args.Count },
+            { "Avg", (self, args) => args.ConvertAll(arg => Convert.ToDouble(self.Evaluate(arg))).Sum() / (double)args.Count },
             { "default", (self, args) =>
                 {
                     object argValue = self.Evaluate(args[0]);
@@ -557,6 +558,13 @@ namespace CodingSeb.ExpressionEvaluator
                 complexStandardFuncsDictionary = new Dictionary<string, Func<ExpressionEvaluator, List<string>, object>>(complexStandardFuncsDictionary, StringComparerForCasing);
             }
         }
+
+        /// <summary>
+        /// If <c>true</c> Variables dictionary is kept as given so variables are persist outside of the evaluator and the comparer for keys can be defined by the user
+        /// If <c>false</c> Variables dictionary references are copied internally to follow OptionCaseSensitiveEvaluationActive with an internal protected comparer for keys
+        /// By default = false
+        /// </summary>
+        public bool OptionVariablesPersistenceCustomComparer { get; set; }
 
         private StringComparison StringComparisonForCasing { get; set; } = StringComparison.Ordinal;
 
@@ -872,10 +880,20 @@ namespace CodingSeb.ExpressionEvaluator
 
         #region Custom and on the fly evaluation
 
+        private object context;
+
         /// <summary>
         /// If set, this object is used to use it's fields, properties and methods as global variables and functions
         /// </summary>
-        public object Context { get; set; }
+        public object Context
+        {
+            get { return context; }
+            set
+            {
+                context = value;
+                defaultVariables["this"] = context;
+            }
+        }
 
         private IDictionary<string, object> variables = new Dictionary<string, object>(StringComparer.Ordinal);
 
@@ -890,7 +908,17 @@ namespace CodingSeb.ExpressionEvaluator
         public IDictionary<string, object> Variables
         {
             get { return variables; }
-            set { variables = value == null ? new Dictionary<string, object>(StringComparerForCasing) : new Dictionary<string, object>(value, StringComparerForCasing); }
+            set
+            {
+                if(OptionVariablesPersistenceCustomComparer)
+                {
+                    variables = value;
+                }
+                else
+                {
+                    variables = value == null ? new Dictionary<string, object>(StringComparerForCasing) : new Dictionary<string, object>(value, StringComparerForCasing); 
+                }
+            }
         }
 
         /// <summary>
@@ -968,6 +996,17 @@ namespace CodingSeb.ExpressionEvaluator
         }
 
         /// <summary>
+        /// Constructor with variables initialize
+        /// </summary>
+        /// <param name="variables">The Values of variables use in the expressions</param>
+        /// <param name="optionVariablesPersistenceCustomComparer">To set <see cref="OptionVariablesPersistenceCustomComparer"/> before setting <see cref="Variables"/></param>
+        public ExpressionEvaluator(IDictionary<string, object> variables, bool optionVariablesPersistenceCustomComparer) : this()
+        {
+            OptionVariablesPersistenceCustomComparer = optionVariablesPersistenceCustomComparer;
+            Variables = variables;
+        }
+
+        /// <summary>
         /// Constructor with context initialize
         /// </summary>
         /// <param name="context">the context that propose it's fields, properties and methods to the evaluation</param>
@@ -983,6 +1022,19 @@ namespace CodingSeb.ExpressionEvaluator
         /// <param name="variables">The Values of variables use in the expressions</param>
         public ExpressionEvaluator(object context, IDictionary<string, object> variables) : this()
         {
+            Context = context;
+            Variables = variables;
+        }
+
+        /// <summary>
+        /// Constructor with variables and context initialize
+        /// </summary>
+        /// <param name="context">the context that propose it's fields, properties and methods to the evaluation</param>
+        /// <param name="variables">The Values of variables use in the expressions</param>
+        /// <param name="optionVariablesPersistenceCustomComparer">To set <see cref="OptionVariablesPersistenceCustomComparer"/> before setting <see cref="Variables"/></param>
+        public ExpressionEvaluator(object context, IDictionary<string, object> variables, bool optionVariablesPersistenceCustomComparer) : this()
+        {
+            OptionVariablesPersistenceCustomComparer = optionVariablesPersistenceCustomComparer;
             Context = context;
             Variables = variables;
         }
@@ -1130,7 +1182,7 @@ namespace CodingSeb.ExpressionEvaluator
                     Match charMatch = internalCharRegex.Match(script.Substring(index));
 
                     if (charMatch.Success)
-                        index += charMatch.Length;
+                        index += charMatch.Length - 1;
 
                     parsed = false;
                 }
@@ -1436,7 +1488,7 @@ namespace CodingSeb.ExpressionEvaluator
 
                                     lastResult = ScriptEvaluate(subScript, ref isReturn, ref isBreak, ref isContinue);
 
-                                    if (isBreak)
+                                    if (isBreak || isReturn)
                                     {
                                         isBreak = false;
                                         break;
@@ -2092,6 +2144,15 @@ namespace CodingSeb.ExpressionEvaluator
                         {
                             throw;
                         }
+                        catch (NullReferenceException nullException)
+                        {
+                            stack.Push(new BubbleExceptionContainer()
+                            {
+                                Exception = nullException
+                            });
+
+                            return true;
+                        }
                         catch (Exception ex)
                         {
                             //Transport the exception in stack.
@@ -2258,6 +2319,7 @@ namespace CodingSeb.ExpressionEvaluator
                                             pushVarValue = false;
                                     }
 
+									bool isVarValueSet = false;
                                     if (member == null && pushVarValue)
                                     {
                                         VariableEvaluationEventArg variableEvaluationEventArg = new VariableEvaluationEventArg(varFuncName, this, obj ?? keepObj, genericsTypes, GetConcreteTypes);
@@ -2267,10 +2329,11 @@ namespace CodingSeb.ExpressionEvaluator
                                         if (variableEvaluationEventArg.HasValue)
                                         {
                                             varValue = variableEvaluationEventArg.Value;
+											isVarValueSet = true;
                                         }
                                     }
 
-                                    if (!isDynamic && varValue == null && pushVarValue)
+                                    if (!isVarValueSet && !isDynamic && varValue == null && pushVarValue)
                                     {
                                         varValue = ((dynamic)member).GetValue(obj);
 
@@ -2487,32 +2550,61 @@ namespace CodingSeb.ExpressionEvaluator
             Type staticType = GetTypeByFriendlyName(typeName, genericsTypes);
 
             // For inline namespace parsing
-            if (staticType == null && OptionInlineNamespacesEvaluationActive)
+            if (staticType == null)
             {
-                int subIndex = 0;
-                Match namespaceMatch = varOrFunctionRegEx.Match(expression.Substring(i + subIndex));
-
-                while (staticType == null
-                    && namespaceMatch.Success
-                    && !namespaceMatch.Groups["sign"].Success
-                    && !namespaceMatch.Groups["assignationOperator"].Success
-                    && !namespaceMatch.Groups["postfixOperator"].Success
-                    && !namespaceMatch.Groups["isfunction"].Success
-                    && i + subIndex < expression.Length
-                    && !typeName.EndsWith("?"))
+                if (OptionInlineNamespacesEvaluationActive)
                 {
-                    subIndex += namespaceMatch.Length;
-                    typeName += $"{namespaceMatch.Groups["inObject"].Value}{namespaceMatch.Groups["name"].Value}{((i + subIndex < expression.Length && expression.Substring(i + subIndex)[0] == '?') ? "?" : "") }";
+                    int subIndex = 0;
+                    Match namespaceMatch = varOrFunctionRegEx.Match(expression.Substring(i + subIndex));
 
-                    staticType = GetTypeByFriendlyName(typeName, namespaceMatch.Groups["isgeneric"].Value);
-
-                    if (staticType != null)
+                    while (staticType == null
+                        && namespaceMatch.Success
+                        && !namespaceMatch.Groups["sign"].Success
+                        && !namespaceMatch.Groups["assignationOperator"].Success
+                        && !namespaceMatch.Groups["postfixOperator"].Success
+                        && !namespaceMatch.Groups["isfunction"].Success
+                        && i + subIndex < expression.Length
+                        && !typeName.EndsWith("?"))
                     {
-                        i += subIndex;
-                        break;
-                    }
+                        subIndex += namespaceMatch.Length;
+                        typeName += $"{namespaceMatch.Groups["inObject"].Value}{namespaceMatch.Groups["name"].Value}{((i + subIndex < expression.Length && expression.Substring(i + subIndex)[0] == '?') ? "?" : "") }";
 
-                    namespaceMatch = varOrFunctionRegEx.Match(expression.Substring(i + subIndex));
+                        staticType = GetTypeByFriendlyName(typeName, namespaceMatch.Groups["isgeneric"].Value);
+
+                        if (staticType != null)
+                        {
+                            i += subIndex;
+                            break;
+                        }
+
+                        namespaceMatch = varOrFunctionRegEx.Match(expression.Substring(i + subIndex));
+                    }
+                }
+                else
+                {
+                    int subIndex = 0;
+                    Match typeMatch = varOrFunctionRegEx.Match(expression.Substring(i + subIndex));
+
+                    if (staticType == null
+                        && typeMatch.Success
+                        && !typeMatch.Groups["sign"].Success
+                        && !typeMatch.Groups["assignationOperator"].Success
+                        && !typeMatch.Groups["postfixOperator"].Success
+                        && !typeMatch.Groups["isfunction"].Success
+                        && !typeMatch.Groups["inObject"].Success
+                        && i + subIndex < expression.Length
+                        && !typeName.EndsWith("?"))
+                    {
+                        subIndex += typeMatch.Length;
+                        typeName += $"{typeMatch.Groups["name"].Value}{((i + subIndex < expression.Length && expression.Substring(i + subIndex)[0] == '?') ? "?" : "") }";
+
+                        staticType = GetTypeByFriendlyName(typeName, typeMatch.Groups["isgeneric"].Value);
+
+                        if (staticType != null)
+                        {
+                            i += subIndex;
+                        }
+                    }
                 }
             }
 
@@ -2785,7 +2877,7 @@ namespace CodingSeb.ExpressionEvaluator
 
                         if(type.IsArray && OptionForceIntegerNumbersEvaluationsAsDoubleByDefault)
                         {
-                            oIndexingArgs = oIndexingArgs.Select(o => o is double ? (int)o : o).ToList();
+                            oIndexingArgs = oIndexingArgs.ConvertAll(o => o is double ? (int)o : o);
                         }
                         else
                         {
@@ -2922,8 +3014,16 @@ namespace CodingSeb.ExpressionEvaluator
 
                     if (expression.Substring(i)[0] == '"')
                     {
-                        endOfString = true;
-                        stack.Push(resultString.ToString());
+                        if (expression.Substring(i).Length > 1 && expression.Substring(i)[1] == '"')
+                        {
+                            i += 2;
+                            resultString.Append(@"""");
+                        }
+                        else
+                        {
+                            endOfString = true;
+                            stack.Push(resultString.ToString());
+                        }
                     }
                     else if (expression.Substring(i)[0] == '{')
                     {
@@ -2977,7 +3077,13 @@ namespace CodingSeb.ExpressionEvaluator
                                 string beVerb = bracketCount == 1 ? "is" : "are";
                                 throw new Exception($"{bracketCount} '}}' character {beVerb} missing in expression : [{expression}]");
                             }
-                            resultString.Append(Evaluate(innerExp.ToString()));
+
+                            object obj = Evaluate(innerExp.ToString());
+
+                            if (obj is BubbleExceptionContainer bubbleExceptionContainer)
+                                throw bubbleExceptionContainer.Exception;
+
+                            resultString.Append(obj);
                         }
                     }
                     else if (expression.Substring(i, expression.Length - i)[0] == '}')
@@ -3117,14 +3223,24 @@ namespace CodingSeb.ExpressionEvaluator
                             }
                             else
                             {
+                                var left = (dynamic)list[i + 1];
+                                var right = (dynamic)list[i - 1];
+
                                 try
                                 {
-                                    list[i] = operatorEvalutationsDict[eOp]((dynamic)list[i + 1], (dynamic)list[i - 1]);
+                                    list[i] = operatorEvalutationsDict[eOp](left, right);
+
+                                    if (left is BubbleExceptionContainer && right is string)
+                                    {
+                                        list[i] = left; //Bubble up the causing error
+                                    }
+                                    else if (right is BubbleExceptionContainer && left is string)
+                                    {
+                                        list[i] = right; //Bubble up the causing error
+                                    }
                                 }
                                 catch (Exception ex)
                                 {
-                                    var left = (dynamic)list[i + 1];
-                                    var right = (dynamic)list[i - 1];
                                     if (left is BubbleExceptionContainer)
                                     {
                                         list[i] = left; //Bubble up the causing error
@@ -3268,7 +3384,14 @@ namespace CodingSeb.ExpressionEvaluator
                 }
                 else
                 {
-                    throw new InvalidCastException($"A object of type {typeToAssign} can not be cast implicitely in {stronglyTypedVariable.Type}");
+                    try
+                    {
+                        Variables[varName] = Convert.ChangeType(value, stronglyTypedVariable.Type);
+                    }
+                    catch
+                    {
+                        throw new InvalidCastException($"A object of type {typeToAssign} can not be cast implicitely in {stronglyTypedVariable.Type}");
+                    }
                 }
             }
             else
@@ -3674,14 +3797,23 @@ namespace CodingSeb.ExpressionEvaluator
                                         .MakeGenericMethod(parameterType.GetElementType())
                                         .Invoke(null, new object[] { modifiedArgs[a] });
                                 }
-                                else
+                                else if (IsCastable(modifiedArgs[a].GetType(), parameterType))
                                 {
                                     modifiedArgs[a] = Convert.ChangeType(modifiedArgs[a], parameterType);
+                                }
+                                else
+                                {
+                                    parametersCastOK = false;
                                 }
                             }
                         }
                     }
                     catch
+                    {
+                        parametersCastOK = false;
+                    }
+
+                    if (!parametersCastOK)
                     {
                         try
                         {
@@ -3692,16 +3824,10 @@ namespace CodingSeb.ExpressionEvaluator
                             if (parameterCastEvaluationEventArg.FunctionModifiedArgument)
                             {
                                 modifiedArgs[a] = parameterCastEvaluationEventArg.Argument;
-                            }
-                            else
-                            {
-                                parametersCastOK = false;
+                                parametersCastOK = true;
                             }
                         }
-                        catch
-                        {
-                            parametersCastOK = false;
-                        }
+                        catch {}
                     }
                 }
             }

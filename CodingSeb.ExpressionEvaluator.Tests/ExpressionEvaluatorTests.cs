@@ -983,6 +983,7 @@ namespace CodingSeb.ExpressionEvaluator.Tests
         [TestCase("new System.Xml.XmlDocument().FluidLoadXml(\"<root><element id='MyElement'>Xml Content</element></root>\").SelectSingleNode(\"//element[@id='MyElement']\").InnerXml", ExpectedResult = "Xml Content", Category = "Complex expression,Inline namespace,Fluid")]
         [TestCase("new System.Xml.XmlDocument().FluidLoadXml(\"<root><element id='MyElement'>Xml Content</element></root>\").ChildNodes[0].Name", ExpectedResult = "root", Category = "Complex expression,Inline namespace,Fluid,Custom Indexer")]
         [TestCase("string.Join(\" - \", new string[]{\"Hello\", \"Bye\", \"Other\"})", ExpectedResult = "Hello - Bye - Other", Category = "Complex expression, Different brackets imbrication")]
+        [TestCase("new{Hello = \"Hye\"}.Hello", ExpectedResult = "Hye", Category = "Complex expression, new without space but not a word")]
 
         #endregion
 
@@ -1591,6 +1592,53 @@ namespace CodingSeb.ExpressionEvaluator.Tests
         #region Bug corrections
 
         /// <summary>
+        /// To correct #127 Evaluating "new DateTime(2022,1,20)" does not work 
+        /// unless OptionInlineNamespacesEvaluationActive is turned on
+        /// </summary>
+        [Test]
+        [Category("Bug")]
+        [Category("#127")]
+        public void Evaluate_NewDateTime_When_OptionInlineNamespacesEvaluationActive_is_off()
+        {
+            ExpressionEvaluator evaluator = new ExpressionEvaluator()
+            {
+                OptionInlineNamespacesEvaluationActive = false,
+            };
+
+            DateTime? dateTime = evaluator.Evaluate<DateTime>("new DateTime(2022,1,20)");
+
+            dateTime.HasValue.ShouldBeTrue();
+
+            dateTime.Value.Year.ShouldBe(2022);
+            dateTime.Value.Month.ShouldBe(1);
+            dateTime.Value.Day.ShouldBe(20);
+        }
+
+        /// <summary>
+        /// To correct #127 Evaluating "new DateTime(2022,1,20)" does not work 
+        /// unless OptionInlineNamespacesEvaluationActive is turned on
+        /// </summary>
+        [Test]
+        [Category("Bug")]
+        [Category("#127")]
+        public void Evaluate_NewDateTime_When_OptionInlineNamespacesEvaluationActive_is_on()
+        {
+            ExpressionEvaluator evaluator = new ExpressionEvaluator()
+            {
+                OptionInlineNamespacesEvaluationActive = true,
+            };
+
+            DateTime? dateTime = evaluator.Evaluate<DateTime>("new DateTime(2022,1,20)");
+
+            dateTime.HasValue.ShouldBeTrue();
+
+            dateTime.Value.Year.ShouldBe(2022);
+            dateTime.Value.Month.ShouldBe(1);
+            dateTime.Value.Day.ShouldBe(20);
+        }
+
+
+        /// <summary>
         /// To correct #81 Exception is assigned to variable
         /// With simple variable
         /// </summary>
@@ -1639,6 +1687,91 @@ namespace CodingSeb.ExpressionEvaluator.Tests
             var evaluator = new ExpressionEvaluator();
             evaluator.Evaluate("DateTime.Now.AddDays(1)")
                 .ShouldBeOfType<DateTime>();
+        }
+
+        /// <summary>
+        /// To correct #104 Extension methods do not work on context
+        /// work now with this keyword like in C#
+        /// </summary>
+        [Test]
+        [Category("Bug")]
+        [Category("#104")]
+        public void Evaluate_ExtensionMethodOnContext()
+        {
+            var evaluator = new ExpressionEvaluator
+            {
+                Context = new List<int>()
+                {
+                    1,2,3,4,5
+                }
+            };
+
+            evaluator.Evaluate("this.Sum()")
+                .ShouldBe(15);
+        }
+
+        /// <summary>
+        /// To correct #104 Indexing do not work on context
+        /// work now with this keyword like in C#
+        /// </summary>
+        [Test]
+        [Category("Bug")]
+        [Category("#104")]
+        public void Evaluate_IndexingOnContext()
+        {
+            var evaluator = new ExpressionEvaluator
+            {
+                Context = new ClassForIndexing()
+            };
+
+            evaluator.Evaluate("this[\"Test\"]")
+                .ShouldBe("TestTest");
+        }
+
+        /// <summary>
+        /// To correct #105 Exception were not thrown when concat with string
+        /// </summary>
+        [Test]
+        [Category("Bug")]
+        [Category("#105")]
+        public void Evaluate_ExceptionsNotThrownWhenConcatWithString()
+        {
+            var evaluator = new ExpressionEvaluator
+            {
+                Context = new { Person = new Person2 { Name = null, Number = 1.11m } }
+            };
+
+            Should.Throw<NullReferenceException>(() => Console.WriteLine(evaluator.Evaluate("Person.Name.Trim() + \"Test one \"")));
+            Should.Throw<NullReferenceException>(() => Console.WriteLine(evaluator.Evaluate("\"Test one \" + Person.Name.Trim()")));
+            Should.Throw<ExpressionEvaluatorSyntaxErrorException>(() => Console.WriteLine(evaluator.Evaluate("\"Test two \" + Person.AnotherName.Trim()")));
+        }
+
+        /// <summary>
+        /// #105 Exception were not thrown when in string interpolation
+        /// </summary>
+        [Test]
+        [Category("Bug")]
+        [Category("#105")]
+        public void Evaluate_ExceptionsNotThrownWhenInStringInterpolation()
+        {
+            var evaluator = new ExpressionEvaluator
+            {
+                Context = new { Person = new Person2 { Name = null, Number = 1.11m } }
+            };
+
+            Should.Throw<NullReferenceException>(() => Console.WriteLine(evaluator.Evaluate("$\"Test one {Person.Name.Trim()}\"")));
+            Should.Throw<ExpressionEvaluatorSyntaxErrorException>(() => Console.WriteLine(evaluator.Evaluate("$\"Test two {Person.AnotherName.Trim()}\"")));
+        }
+
+        [Test]
+        [Category("Bug")]
+        [Category("MergeRequest")]
+        [Category("#107")]
+        public void Evaluate_DoubleDoubleQuotesInEscapedStringThrowException()
+        {
+            var evaluator = new ExpressionEvaluator();
+
+            evaluator.Evaluate("@\"Hello \"\" Joe\"").ShouldBe(@"Hello "" Joe");
         }
 
         #endregion
@@ -1938,6 +2071,27 @@ namespace CodingSeb.ExpressionEvaluator.Tests
                         .Returns(3)
                         .SetCategory("On the fly var")
                         .SetCategory("Static Onthefly");
+
+                // MR #106
+                ExpressionEvaluator nullForceEvaluator = new ExpressionEvaluator
+                {
+                    Variables = new Dictionary<string, object>()
+                {
+                    { "obj", new { }}
+                }
+                };
+
+                nullForceEvaluator.EvaluateVariable += (sender, e) =>
+                {
+                    e.HasValue = true;
+                    e.Value = null;
+                };
+
+                yield return new TestCaseData(nullForceEvaluator
+                    , "obj.x"
+                    , null)
+                    .Returns(null)
+                    .SetCategory("On the fly var");
 
                 #endregion
 
@@ -2491,25 +2645,29 @@ namespace CodingSeb.ExpressionEvaluator.Tests
                     , "Persons.Sum(x=>x.Number)"
                     , null)
                     .Returns(23.22m)
-                    .SetCategory("Bug resolution");
+                    .SetCategory("Bug resolution")
+                    .SetCategory("#65");
 
                 yield return new TestCaseData(new ExpressionEvaluator() { Context = new { Persons } }
                     , "Persons.Average(x=>x.Number)"
                     , null)
                     .Returns(11.61m)
-                    .SetCategory("Bug resolution");
+                    .SetCategory("Bug resolution")
+                    .SetCategory("#65");
 
                 yield return new TestCaseData(new ExpressionEvaluator() { Context = new { Persons } }
                     , "Persons.Max(x=>x.Number)"
                     , null)
                     .Returns(12.11m)
-                    .SetCategory("Bug resolution");
+                    .SetCategory("Bug resolution")
+                    .SetCategory("#65");
 
                 yield return new TestCaseData(new ExpressionEvaluator() { Context = new { Persons } }
                     , "Persons.Min(x=>x.Number)"
                     , null)
                     .Returns(11.11m)
-                    .SetCategory("Bug resolution");
+                    .SetCategory("Bug resolution")
+                    .SetCategory("#65");
 
                 #endregion
 
@@ -2520,6 +2678,7 @@ namespace CodingSeb.ExpressionEvaluator.Tests
                     , null)
                     .Returns(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData))
                     .SetCategory("Bug resolution")
+                    .SetCategory("#95")
                     .SetCategory("NestedType");
 
                 yield return new TestCaseData(new ExpressionEvaluator()
@@ -2527,6 +2686,7 @@ namespace CodingSeb.ExpressionEvaluator.Tests
                     , null)
                     .Returns(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments))
                     .SetCategory("Bug resolution")
+                    .SetCategory("#95")
                     .SetCategory("NestedType");
 
                 yield return new TestCaseData(new ExpressionEvaluator()
@@ -2534,6 +2694,7 @@ namespace CodingSeb.ExpressionEvaluator.Tests
                     , null)
                     .Returns(45)
                     .SetCategory("Bug resolution")
+                    .SetCategory("#95")
                     .SetCategory("NestedType");
 
                 #endregion
@@ -2545,6 +2706,7 @@ namespace CodingSeb.ExpressionEvaluator.Tests
                     , null)
                     .Returns(-1)
                     .SetCategory("Bug resolution")
+                    .SetCategory("#95")
                     .SetCategory("MethodNameAsDelegates");
 
                 yield return new TestCaseData(new ExpressionEvaluator()
@@ -2552,6 +2714,7 @@ namespace CodingSeb.ExpressionEvaluator.Tests
                     , null)
                     .Returns(-1)
                     .SetCategory("Bug resolution")
+                    .SetCategory("#95")
                     .SetCategory("MethodNameAsDelegates");
 
                 yield return new TestCaseData(new ExpressionEvaluator()
@@ -2559,6 +2722,7 @@ namespace CodingSeb.ExpressionEvaluator.Tests
                     , null)
                     .Returns(-1)
                     .SetCategory("Bug resolution")
+                    .SetCategory("#95")
                     .SetCategory("MethodNameAsDelegates");
 
                 yield return new TestCaseData(new ExpressionEvaluator()
@@ -2566,6 +2730,7 @@ namespace CodingSeb.ExpressionEvaluator.Tests
                     , null)
                     .Returns(-1)
                     .SetCategory("Bug resolution")
+                    .SetCategory("#95")
                     .SetCategory("MethodNameAsDelegates");
 
                 yield return new TestCaseData(new ExpressionEvaluator()
@@ -2573,20 +2738,15 @@ namespace CodingSeb.ExpressionEvaluator.Tests
                     , null)
                     .Returns(Array.ConvertAll("test for Upper".ToCharArray(), Char.IsUpper))
                     .SetCategory("Bug resolution")
+                    .SetCategory("#95")
                     .SetCategory("MethodNameAsDelegates");
-
-                //yield return new TestCaseData(new ExpressionEvaluator()
-                //    , "Array.ConvertAll(\"test for Upper\".ToCharArray(),u => u => Char.IsUpper(u) ? Char.ToLower(u) : Char.ToUpper(u))"
-                //    , null)
-                //    .Returns(Array.ConvertAll("test for Upper".ToCharArray(), u => Char.IsUpper(u) ? Char.ToLower(u) : Char.ToUpper(u)))
-                //    .SetCategory("Bug resolution")
-                //    .SetCategory("MethodNameAsDelegates");
 
                 yield return new TestCaseData(new ExpressionEvaluator()
                     , "(() => { var m = int.Parse; return m(\"5\"); })()"
                     , null)
                     .Returns(5)
                     .SetCategory("Bug resolution")
+                    .SetCategory("#95")
                     .SetCategory("MethodNameAsDelegates");
 
               yield return new TestCaseData(new ExpressionEvaluator()
@@ -2594,6 +2754,7 @@ namespace CodingSeb.ExpressionEvaluator.Tests
                     , null)
                     .Returns('U')
                     .SetCategory("Bug resolution")
+                    .SetCategory("#95")
                     .SetCategory("MethodNameAsDelegates");
 
               yield return new TestCaseData(new ExpressionEvaluator()
@@ -2601,6 +2762,7 @@ namespace CodingSeb.ExpressionEvaluator.Tests
                     , null)
                     .Returns('U')
                     .SetCategory("Bug resolution")
+                    .SetCategory("#95")
                     .SetCategory("MethodNameAsDelegates");
 
               yield return new TestCaseData(new ExpressionEvaluator()
@@ -2608,6 +2770,7 @@ namespace CodingSeb.ExpressionEvaluator.Tests
                     , null)
                     .Returns('U')
                     .SetCategory("Bug resolution")
+                    .SetCategory("#95")
                     .SetCategory("MethodNameAsDelegates");
 
               yield return new TestCaseData(new ExpressionEvaluator()
@@ -2615,6 +2778,7 @@ namespace CodingSeb.ExpressionEvaluator.Tests
                     , null)
                     .Returns('U')
                     .SetCategory("Bug resolution")
+                    .SetCategory("#95")
                     .SetCategory("MethodNameAsDelegates");
 
               yield return new TestCaseData(new ExpressionEvaluator()
@@ -2622,6 +2786,7 @@ namespace CodingSeb.ExpressionEvaluator.Tests
                     , null)
                     .Returns('U')
                     .SetCategory("Bug resolution")
+                    .SetCategory("#95")
                     .SetCategory("MethodNameAsDelegates");
 
               yield return new TestCaseData(new ExpressionEvaluator()
@@ -2629,6 +2794,7 @@ namespace CodingSeb.ExpressionEvaluator.Tests
                     , null)
                     .Returns(true)
                     .SetCategory("Bug resolution")
+                    .SetCategory("#95")
                     .SetCategory("MethodNameAsDelegates");
 
               yield return new TestCaseData(new ExpressionEvaluator()
@@ -2636,6 +2802,7 @@ namespace CodingSeb.ExpressionEvaluator.Tests
                     , null)
                     .Returns('U')
                     .SetCategory("Bug resolution")
+                    .SetCategory("#95")
                     .SetCategory("MethodNameAsDelegates");
 
                 #endregion
@@ -2646,48 +2813,56 @@ namespace CodingSeb.ExpressionEvaluator.Tests
                     , "typeof(double[])"
                     , null)
                     .Returns(typeof(double[]))
+                    .SetCategory("#100")
                     .SetCategory("Bug resolution");
 
                 yield return new TestCaseData(new ExpressionEvaluator()
                     , "typeof(double[ ])"
                     , null)
                     .Returns(typeof(double[]))
+                    .SetCategory("#100")
                     .SetCategory("Bug resolution");
 
                 yield return new TestCaseData(new ExpressionEvaluator()
                     , "typeof(double[][])"
                     , null)
                     .Returns(typeof(double[][]))
+                    .SetCategory("#100")
                     .SetCategory("Bug resolution");
 
                 yield return new TestCaseData(new ExpressionEvaluator()
                     , "typeof(double[,])"
                     , null)
                     .Returns(typeof(double[,]))
+                    .SetCategory("#100")
                     .SetCategory("Bug resolution");
 
                 yield return new TestCaseData(new ExpressionEvaluator()
                     , "typeof(int[])"
                     , null)
                     .Returns(typeof(int[]))
+                    .SetCategory("#100")
                     .SetCategory("Bug resolution");
 
                 yield return new TestCaseData(new ExpressionEvaluator()
                     , "typeof(Int32[])"
                     , null)
                     .Returns(typeof(Int32[]))
+                    .SetCategory("#100")
                     .SetCategory("Bug resolution");
 
                 yield return new TestCaseData(new ExpressionEvaluator()
                     , "typeof(string[])"
                     , null)
                     .Returns(typeof(string[]))
+                    .SetCategory("#100")
                     .SetCategory("Bug resolution");
 
                 yield return new TestCaseData(new ExpressionEvaluator()
                     , "typeof(Regex[])"
                     , null)
                     .Returns(typeof(Regex[]))
+                    .SetCategory("#100")
                     .SetCategory("Bug resolution");
 
                 yield return new TestCaseData(new ExpressionEvaluator(new ObjectContainer()
@@ -2697,6 +2872,41 @@ namespace CodingSeb.ExpressionEvaluator.Tests
                     , "(double[])AnObjectProperty"
                     , null)
                     .Returns(new double[] { 1.1, 2.3, 4.3 })
+                    .SetCategory("#100")
+                    .SetCategory("Bug resolution");
+
+                #endregion
+
+                #region for issue #110 OptionForceIntegerNumbersEvaluationsAsDoubleByDefault leads to exception when dividing
+
+                yield return new TestCaseData(new ExpressionEvaluator()
+                    {
+                        OptionForceIntegerNumbersEvaluationsAsDoubleByDefault = true,
+                    }
+                    , "3/Math.Round(Avg(1,2),MidpointRounding.AwayFromZero)"
+                    , null)
+                    .Returns(1.5d)
+                    .SetCategory("#110")
+                    .SetCategory("Bug resolution");
+
+                yield return new TestCaseData(new ExpressionEvaluator()
+                    {
+                        OptionForceIntegerNumbersEvaluationsAsDoubleByDefault = true,
+                    }
+                    , "Math.Round(1.5,MidpointRounding.AwayFromZero)"
+                    , null)
+                    .Returns(2d)
+                    .SetCategory("#110")
+                    .SetCategory("Bug resolution");
+
+                yield return new TestCaseData(new ExpressionEvaluator()
+                    {
+                        OptionForceIntegerNumbersEvaluationsAsDoubleByDefault = true,
+                    }
+                    , "Avg(1,2)"
+                    , null)
+                    .Returns(1.5d)
+                    .SetCategory("#110")
                     .SetCategory("Bug resolution");
 
                 #endregion
